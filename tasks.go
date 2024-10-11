@@ -1,0 +1,638 @@
+package main
+
+import (
+	"bytes"
+	"cmp"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/jmoiron/sqlx"
+	"github.com/stxpub/codec"
+	"github.com/tidwall/gjson"
+	_ "modernc.org/sqlite"
+)
+
+// Define the schema for a sqlite database
+// containing an auto-incrementing id, a timestamp and a string.
+// The id is the primary key.
+// The timestamp is the time the row was inserted.
+// The string is the data.
+const dotsSchema = `
+CREATE TABLE IF NOT EXISTS dots (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+	bitcoin_block_height INTEGER,
+	dot TEXT NOT NULL
+);`
+
+const mempoolStatsSchema = `
+CREATE TABLE IF NOT EXISTS mempool_stats (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+	count INTEGER,
+	data JSONB
+);`
+
+const stxPriceSchema = `
+CREATE TABLE IF NOT EXISTS sats_per_stx (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+	price REAL
+);`
+
+type BlockCost struct {
+	ReadLength  int `json:"read_length"`
+	ReadCount   int `json:"read_count"`
+	WriteLength int `json:"write_length"`
+	WriteCount  int `json:"write_count"`
+	Runtime     int `json:"runtime"`
+}
+
+type AttributeMap map[string]string
+
+func (attrs AttributeMap) fmt() string {
+	var w strings.Builder
+	w.WriteString("[")
+	for k, v := range attrs {
+		w.WriteString(fmt.Sprintf("%s=%s, ", k, v))
+	}
+	w.WriteString("]")
+	return w.String()
+}
+
+type BlockCommit struct {
+	blockHeaderHash string
+	txid            string
+	vtxindex        int
+	sender          string
+	burnBlockHeight int
+	spend           int
+	sortitionId     string
+	parentBlockPtr  int
+	parentVtxindex  int
+	parent          string
+	stacksHeight    int
+	blockHash       string
+	won             bool
+	canonical       bool
+	tip             bool
+	coinbaseEarned  int
+	feesEarned      int
+	cost            BlockCost
+	blockSize       int
+	potentialTip    bool
+	nextTip         bool
+}
+
+func (cost *BlockCost) getFullness() float32 {
+	fullness := max(
+		float32(cost.ReadLength)/100_000_000,
+		float32(cost.ReadCount)/15_000,
+		float32(cost.WriteLength)/15_000_000,
+		float32(cost.WriteCount)/15_000,
+		float32(cost.Runtime)/5_000_000_000,
+	)
+	return fullness * 100
+}
+
+type BlockCommits struct {
+	SortitionFeesMap map[string]int
+	AllCommits       map[string]*BlockCommit
+	CommitsByBlock   map[int][]*BlockCommit
+}
+
+func openDatabases() (*sqlx.DB, *sqlx.DB) {
+	dbPath := filepath.Join(config.DataDir, sortitionDb)
+	db := sqlx.MustOpen("sqlite", dbPath)
+
+	dbPath = filepath.Join(config.DataDir, chainstateDb)
+	cdb := sqlx.MustOpen("sqlite", dbPath)
+
+	return db, cdb
+}
+
+func getBlockRange(db *sqlx.DB, numBlocks int) (int, int) {
+	var startBlock int
+	if err := db.Get(&startBlock, "SELECT MAX(block_height) FROM block_commits"); err != nil {
+		log.Fatal(err)
+	}
+	lowerBound := startBlock - numBlocks
+	return startBlock, lowerBound
+}
+
+type miner struct {
+	Address   string
+	BlocksWon uint
+	BtcSpent  uint
+	StxEarnt  float32
+	WinRate   float32
+}
+
+func queryMinerPower() []miner {
+	db, cdb := openDatabases()
+	defer db.Close()
+	defer cdb.Close()
+
+	var tip string
+	if err := cdb.Get(&tip, "SELECT index_block_hash FROM payments ORDER BY stacks_block_height DESC LIMIT 1"); err != nil {
+		log.Fatal(err)
+	}
+
+	const numBlocks = 144
+	_, lowerBound := getBlockRange(db, numBlocks)
+
+	query := `WITH RECURSIVE block_ancestors(burn_header_height,parent_block_id,address,burnchain_commit_burn,stx_reward) AS (
+    	SELECT block_headers.burn_header_height,block_headers.parent_block_id,payments.address,payments.burnchain_commit_burn,(payments.coinbase + payments.tx_fees_anchored + payments.tx_fees_streamed) AS stx_reward
+        FROM block_headers JOIN payments ON block_headers.index_block_hash = payments.index_block_hash WHERE payments.index_block_hash = ?
+    	UNION ALL
+        SELECT block_headers.burn_header_height,block_headers.parent_block_id,payments.address,payments.burnchain_commit_burn,(payments.coinbase + payments.tx_fees_anchored + payments.tx_fees_streamed) AS stx_reward
+        FROM (block_headers JOIN payments ON block_headers.index_block_hash = payments.index_block_hash) JOIN block_ancestors ON block_headers.index_block_hash = block_ancestors.parent_block_id
+    )
+    SELECT block_ancestors.burn_header_height,block_ancestors.address,block_ancestors.burnchain_commit_burn,block_ancestors.stx_reward
+    FROM block_ancestors LIMIT ?`
+
+	rows, err := cdb.Query(query, tip, numBlocks)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	btcSpent := make(map[string]uint)
+	stxEarnt := make(map[string]uint)
+	addrCounts := make(map[string]uint)
+	var numRows uint = 0
+
+	for rows.Next() {
+		var burnHeight int
+		var commitBurn, stxReward uint
+		var address string
+		if err := rows.Scan(&burnHeight, &address, &commitBurn, &stxReward); err != nil {
+			log.Fatal(err)
+		}
+		if burnHeight <= lowerBound {
+			// log.Println("Skipping", burnHeight, address, commitBurn, stxReward)
+			continue
+		}
+		addrCounts[address] += 1
+		btcSpent[address] += commitBurn
+		stxEarnt[address] += stxReward
+		numRows += 1
+	}
+	if !rows.NextResultSet() && rows.Err() != nil {
+		log.Fatalf("expected more result sets: %v", rows.Err())
+	}
+	const noSortitionKey = "No Canonical Sortition"
+	addrCounts[noSortitionKey] = numBlocks - numRows
+	btcSpent[noSortitionKey] = 0
+	stxEarnt[noSortitionKey] = 0
+
+	miners := make([]miner, 0, len(addrCounts))
+	for addr, won := range addrCounts {
+		m := miner{Address: addr,
+			BlocksWon: won,
+			BtcSpent:  btcSpent[addr],
+			StxEarnt:  float32(stxEarnt[addr]) / 1_000_000,
+			WinRate:   (float32(won) / numBlocks) * 100,
+		}
+		miners = append(miners, m)
+	}
+	slices.SortFunc(miners,
+		func(a, b miner) int {
+			return cmp.Compare(b.BlocksWon, a.BlocksWon)
+		})
+	return miners
+}
+
+func createTables(dbPath string) {
+	db := sqlx.MustOpen("sqlite", dbPath)
+	defer db.Close()
+
+	tx := db.MustBegin()
+	db.MustExec(dotsSchema)
+	db.MustExec(mempoolStatsSchema)
+	db.MustExec(stxPriceSchema)
+	tx.Commit()
+}
+
+func fetchCommitData(db *sqlx.DB, lower_bound_height, start_block int) BlockCommits {
+	type hashkey struct {
+		block_height int
+		vtxindex     int
+	}
+
+	hashMap := make(map[hashkey]string)
+	sortitionFeesMap := make(map[string]int)
+	allCommits := make(map[string]*BlockCommit)
+	commitsByBlock := make(map[int][]*BlockCommit)
+
+	query := `SELECT
+			block_header_hash,
+			txid,
+			apparent_sender,
+			sortition_id,
+			vtxindex,
+			block_height,
+			burn_fee,
+			parent_block_ptr,
+			parent_vtxindex
+	FROM
+			block_commits
+	WHERE
+			block_height BETWEEN ? AND ?
+	ORDER BY
+			block_height ASC`
+
+	rows, err := db.Query(query, lower_bound_height, start_block)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var commit BlockCommit
+		if err := rows.Scan(
+			&commit.blockHeaderHash,
+			&commit.txid,
+			&commit.sender,
+			&commit.sortitionId,
+			&commit.vtxindex,
+			&commit.burnBlockHeight,
+			&commit.spend,
+			&commit.parentBlockPtr,
+			&commit.parentVtxindex); err != nil {
+			log.Fatal(err)
+		}
+		if commit.sender == "" {
+			log.Printf("Found empty sender for commit: %v\n", commit)
+		}
+
+		allCommits[commit.blockHeaderHash] = &commit
+		parent, exists := hashMap[hashkey{commit.parentBlockPtr, commit.parentVtxindex}]
+		if exists {
+			if parent == "" {
+				log.Fatalf("Found empty parent for commit %s: %v\n", commit.blockHeaderHash, commit)
+			}
+			commit.parent = parent
+		}
+		hashMap[hashkey{commit.burnBlockHeight, commit.vtxindex}] = commit.blockHeaderHash
+		sortitionFeesMap[commit.sortitionId] += commit.spend
+
+		if _, exists := commitsByBlock[commit.burnBlockHeight]; !exists {
+			commitsByBlock[commit.burnBlockHeight] = make([]*BlockCommit, 0)
+		}
+		commitsByBlock[commit.burnBlockHeight] = append(
+			commitsByBlock[commit.burnBlockHeight], &commit)
+	}
+
+	if !rows.NextResultSet() && rows.Err() != nil {
+		log.Fatalf("expected more result sets: %v", rows.Err())
+	}
+
+	return BlockCommits{
+		SortitionFeesMap: sortitionFeesMap,
+		AllCommits:       allCommits,
+		CommitsByBlock:   commitsByBlock,
+	}
+}
+
+func processWinningBlocks(db *sqlx.DB, cdb *sqlx.DB, lower_bound_height, start_block int, blockCommits BlockCommits) {
+	for block_height := lower_bound_height; block_height <= start_block; block_height++ {
+		var stacks_height int
+		var winningBlockTxid, consensus_hash string
+
+		row := db.QueryRow("SELECT winning_block_txid, stacks_block_height, consensus_hash FROM snapshots WHERE block_height = ?;",
+			block_height)
+		if err := row.Scan(&winningBlockTxid, &stacks_height, &consensus_hash); err != nil {
+			log.Fatal(err)
+		}
+
+		commits := blockCommits.AllCommits
+		blockCommitsMap := blockCommits.CommitsByBlock
+
+		if _, exists := blockCommitsMap[block_height]; !exists {
+			log.Printf("No block commits for block height %d\n", block_height)
+			continue // skip blocks that don't have any commits
+		}
+		block_commits := blockCommitsMap[block_height]
+
+		for _, commit := range block_commits {
+			parent_commit, exists := commits[commit.parent]
+			if commit.txid == winningBlockTxid {
+				processWinningCommit(cdb, commit, parent_commit, exists, stacks_height, consensus_hash)
+			}
+			if exists {
+				commit.stacksHeight = parent_commit.stacksHeight + 1
+			}
+		}
+	}
+}
+
+func processWinningCommit(cdb *sqlx.DB, commit *BlockCommit, parent_commit *BlockCommit, parentExists bool, stacks_height int, consensus_hash string) {
+	commit.won = true
+	commit.potentialTip = true
+	commit.stacksHeight = stacks_height
+	if parentExists {
+		parent_commit.potentialTip = false
+	}
+	// If stacks_height > 0, populate coinbase, fee and block size
+	if stacks_height > 0 {
+		var tx_fees_anchored, tx_fees_streamed int
+		row := cdb.QueryRow("SELECT block_hash, coinbase, tx_fees_anchored, tx_fees_streamed FROM payments WHERE consensus_hash = ?;",
+			consensus_hash)
+		if err := row.Scan(&commit.blockHash, &commit.coinbaseEarned, &tx_fees_anchored, &tx_fees_streamed); err != nil {
+			log.Fatal(err)
+		}
+		commit.feesEarned = tx_fees_anchored + tx_fees_streamed
+
+		var costJson []byte
+		row = cdb.QueryRow("SELECT cost, block_size FROM block_headers WHERE block_hash = ?;", commit.blockHash)
+		if err := row.Scan(&costJson, &commit.blockSize); err != nil {
+			log.Fatal(err)
+		}
+		if err := json.Unmarshal(costJson, &commit.cost); err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
+func processCanonicalTip(db *sqlx.DB, start_block int, commits map[string]*BlockCommit) {
+	var canonical_tip string
+	if err := db.Get(&canonical_tip, "SELECT canonical_stacks_tip_hash FROM snapshots WHERE block_height = ?;", start_block); err != nil {
+		log.Fatal(err)
+	}
+	tip := canonical_tip
+	for {
+		commit, exists := commits[tip]
+		if !exists {
+			break
+		}
+		if tip == canonical_tip {
+			commit.tip = true
+		}
+		commit.canonical = true
+		tip = commit.parent
+	}
+}
+
+func generateGraph(lower_bound_height, start_block int, blockCommits BlockCommits) string {
+	var g strings.Builder
+	g.WriteString("digraph block_commits {\n")
+	g.WriteString("\tgraph [ratio=compress size=\"18,36\" fontsize=28 fontname=monospace]\n")
+	g.WriteString("\tnode [color=black fontsize=24 fontname=monospace fillcolor=white penwidth=1 style=\"filled,dashed\"]\n")
+	g.WriteString("\tedge [color=black penwidth=1]\n")
+
+	block_commits_map := blockCommits.CommitsByBlock
+	sortition_fees_map := blockCommits.SortitionFeesMap
+	commits := blockCommits.AllCommits
+
+	last_height := 0
+	for block_height := lower_bound_height; block_height <= start_block; block_height++ {
+		if _, exists := block_commits_map[block_height]; !exists {
+			continue // skip blocks that don't have any commits
+		}
+
+		g.WriteString(fmt.Sprintf("\tsubgraph cluster_block_%d {\n", block_height))
+		g.WriteString(fmt.Sprintf("URL=\"https://mempool.space/block/%d\"\n", block_height))
+		sortition_spend := 0
+		for _, commit := range block_commits_map[block_height] {
+			if sortition_spend == 0 {
+				sortition_spend = sortition_fees_map[commit.sortitionId]
+			} else if sortition_spend != sortition_fees_map[commit.sortitionId] {
+				log.Printf("Previous sortition spend %d does not match spend %d in commit %s\n",
+					sortition_spend, sortition_fees_map[commit.sortitionId], commit.blockHeaderHash)
+			}
+			attrs := makeNodeAttributes(commit)
+			g.WriteString(fmt.Sprintf("\t\tcommit_%s %s\n",
+				commit.blockHeaderHash, attrs.fmt()))
+
+			if commit.parent != "" {
+				edgeAttrs := makeEdgeAttributes(commit, commits[commit.parent], last_height)
+				g.WriteString(fmt.Sprintf("commit_%s -> commit_%s %s\n",
+					commit.parent, commit.blockHeaderHash, edgeAttrs.fmt()))
+			}
+		}
+		g.WriteString(fmt.Sprintf("\t\tlabel = \"₿ %d\n💰 %dK sats\"\n",
+			block_height, sortition_spend/1000))
+		g.WriteString("\t}\n")
+		last_height = block_height
+	}
+	g.WriteString("}\n")
+
+	return g.String()
+}
+
+func makeNodeAttributes(commit *BlockCommit) AttributeMap {
+	attrs := make(AttributeMap)
+	attrs["color"] = "black"
+	attrs["penwidth"] = "1"
+	attrs["URL"] = `"https://mempool.space/tx/` + commit.txid + `"`
+	label := fmt.Sprintf("⛏️ %s, \n🔗 %d\n💸 %dK sats",
+		strings.Trim(commit.sender, `"`)[:8], commit.stacksHeight, commit.spend/1000)
+	if commit.won {
+		attrs["color"] = "blue"
+		attrs["penwidth"] = "4"
+		label += fmt.Sprintf("\n%.2f%% full\n🚧 %.2f KB",
+			commit.cost.getFullness(), float32(commit.blockSize)/(2*1024))
+	}
+	if commit.nextTip {
+		attrs["color"] = "green"
+	}
+	if commit.tip {
+		attrs["penwidth"] = "8"
+	}
+	if commit.canonical {
+		attrs["style"] = `"filled,solid"`
+	}
+	if commit.blockHash != "" {
+		attrs["URL"] = `"https://explorer.hiro.so/block/0x` + commit.blockHash + `"`
+	}
+	attrs["label"] = fmt.Sprintf("\"%s\"", label)
+	attrs["fillcolor"] = `"` + stringToColor(commit.sender) + `"`
+	return attrs
+}
+
+func stringToColor(input string) string {
+	pastelColors := []string{
+		"#E0BBE4", "#957DAD", "#D291BC", "#FEC8D8", "#FFDFD3", // Purples, Pinks
+		"#D9EEF5", "#B6E3F4", "#B5EAD7", "#C7F4F4", "#E8F3F8", // Lighter Blues, Grays
+		"#F4F1BB", "#D4E09B", "#99C4C8", "#F2D0A9", "#E9D5DA", // Yellows, Peaches
+		"#D8E2DC", "#FFE5D9", "#FFCAD4", "#F4ACB7", "#9D8189", // Greens, Reds
+	}
+
+	hashBytes := []byte(input)[:8] // first 8 bytes
+	index := int(binary.BigEndian.Uint64(hashBytes)) % len(pastelColors)
+	return pastelColors[index]
+}
+
+func makeEdgeAttributes(commit *BlockCommit, parentCommit *BlockCommit, last_height int) AttributeMap {
+	attrs := make(AttributeMap)
+	attrs["color"] = "black"
+	attrs["penwidth"] = "1"
+	if last_height > 0 && parentCommit.burnBlockHeight != last_height {
+		attrs["color"] = "red"
+		attrs["penwidth"] = "4"
+	}
+	if commit.canonical {
+		attrs["color"] = "blue"
+		attrs["penwidth"] = "8"
+	}
+	return attrs
+}
+
+func wrapped(name string, task func() error) func() error {
+	return func() error {
+		start := time.Now()
+		log.Printf("Running %s\n", name)
+		defer func() {
+			log.Printf("Finished %s in %s.\n", name, time.Since(start))
+		}()
+		return task()
+	}
+}
+
+func errFunc(name string) func(e error) {
+	return func(e error) {
+		if e != nil {
+			log.Printf("Task %s failed with: %s\n", name, e)
+		}
+	}
+}
+
+func dotsTask() error {
+	db, cdb := openDatabases()
+	defer db.Close()
+	defer cdb.Close()
+
+	startBlock, lowerBound := getBlockRange(db, 20)
+	blockCommits := fetchCommitData(db, lowerBound, startBlock)
+	processWinningBlocks(db, cdb, lowerBound, startBlock, blockCommits)
+	processCanonicalTip(db, startBlock, blockCommits.AllCommits)
+	dot := generateGraph(lowerBound, startBlock, blockCommits)
+
+	hubDb := sqlx.MustOpen("sqlite", filepath.Join(config.DataDir, "hub.sqlite"))
+	defer hubDb.Close()
+
+	_, err := hubDb.Exec("INSERT INTO dots (bitcoin_block_height, dot) VALUES (?, ?)",
+		startBlock, dot)
+	return err
+}
+
+type mempoolTxn struct {
+	Txid   string `db:"txid"`
+	TxFee  int    `db:"tx_fee"`
+	Length int    `db:"length"`
+	TxBlob string `db:"tx"`
+}
+
+type ContractCount struct {
+	Contract string
+	Count    int
+}
+
+type MempoolData struct {
+	Popular []ContractCount
+}
+
+func mempoolTask() error {
+	// ideas for a potential mempool endpoint
+	// - number of "old" transactions
+	mdb := sqlx.MustOpen("sqlite", filepath.Join(config.DataDir, mempoolDb))
+	defer mdb.Close()
+
+	mempool := []mempoolTxn{}
+	if err := mdb.Select(&mempool, "SELECT txid, tx_fee, length, LOWER(HEX(tx)) AS tx FROM mempool"); err != nil {
+		log.Fatal(err)
+	}
+	// Proactively close mdb
+	mdb.Close()
+
+	fees := []float32{}
+	lengths := []int{}
+	txnCounts := make(map[string]int)
+	for _, txn := range mempool {
+		fees = append(fees, float32(txn.TxFee)/1_000_000)
+		lengths = append(lengths, txn.Length)
+
+		var tx codec.Transaction
+		data, err := hex.DecodeString(txn.TxBlob)
+		if err != nil {
+			log.Printf("Failed to hex decode txid %s, blob %s\n", txn.Txid, txn.TxBlob)
+			continue
+		}
+		err = tx.Decode(bytes.NewReader(data))
+		if err != nil {
+			log.Printf("Failed to txn decode txid %s, blob %s\n", txn.Txid, txn.TxBlob)
+			continue
+		}
+		if tx.Payload.Transfer != nil {
+			txnCounts["simple-token-transfer"] += 1
+		} else if tx.Payload.ContractCall != nil {
+			name := fmt.Sprintf("%s.%s", tx.Payload.ContractCall.Origin.ToStacks(),
+				tx.Payload.ContractCall.Contract)
+			txnCounts[name] += 1
+		}
+	}
+	counters := []ContractCount{}
+	for k, v := range txnCounts {
+		counters = append(counters, ContractCount{k, v})
+	}
+	slices.SortFunc(counters, func(i, j ContractCount) int {
+		// reverse the order to get descending
+		return cmp.Compare(j.Count, i.Count)
+	})
+
+	hubDb := sqlx.MustOpen("sqlite", filepath.Join(config.DataDir, "hub.sqlite"))
+	defer hubDb.Close()
+
+	var d MempoolData
+	d.Popular = counters[:25]
+	blob, _ := json.Marshal(d)
+	_, err := hubDb.Exec("INSERT INTO mempool_stats (count, data) VALUES (?, ?)", len(mempool), blob)
+	if err != nil {
+		log.Printf("Error inserting mempool stats: %v\n", err)
+	}
+	return err
+}
+
+func cmcTask() error {
+	// make a HTTP request to the CoinMarketCap API
+	// add header for API key
+	// parse the response
+	client := &http.Client{}
+	req, err := http.NewRequest("GET", "https://pro-api.coinmarketcap.com/v2/cryptocurrency/quotes/latest?id=4847&convert_id=1", nil)
+	if err != nil {
+		log.Printf("Error fetching STX price: %v\n", err)
+		return err
+	}
+	// TODO: parameterize the API key
+	req.Header.Set("X-CMC_PRO_API_KEY", "720851f1-f244-4170-837f-39b7765e3012")
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	json := string(body)
+	price := gjson.Get(json, "data.4847.quote.1.price")
+
+	hubDb := sqlx.MustOpen("sqlite", filepath.Join(config.DataDir, "hub.sqlite"))
+	defer hubDb.Close()
+
+	_, err = hubDb.Exec("INSERT INTO sats_per_stx (price) VALUES (?)",
+		price.Num*100_000_000)
+
+	return err
+}
