@@ -19,7 +19,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/madflojo/tasks"
 	"github.com/pelletier/go-toml/v2"
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 const (
@@ -56,7 +56,7 @@ func handleMinerViz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	hubDb := sqlx.MustOpen("sqlite", filepath.Join(config.DataDir, "hub.sqlite?mode=ro"))
+	hubDb := sqlx.MustOpen("sqlite3", filepath.Join(config.DataDir, "hub.sqlite?mode=ro"))
 	defer hubDb.Close()
 
 	var d DotResponse
@@ -84,7 +84,7 @@ func handleMempoolPopular(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	hubDb := sqlx.MustOpen("sqlite", filepath.Join(config.DataDir, "hub.sqlite?mode=ro"))
+	hubDb := sqlx.MustOpen("sqlite3", filepath.Join(config.DataDir, "hub.sqlite?mode=ro"))
 	defer hubDb.Close()
 
 	var jsonBlob []byte
@@ -100,7 +100,7 @@ func handleMempoolSize(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
-	hubDb := sqlx.MustOpen("sqlite", filepath.Join(config.DataDir, "hub.sqlite?mode=ro"))
+	hubDb := sqlx.MustOpen("sqlite3", filepath.Join(config.DataDir, "hub.sqlite?mode=ro"))
 	defer hubDb.Close()
 
 	type SizeSnapshot struct {

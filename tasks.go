@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/stxpub/codec"
 	"github.com/tidwall/gjson"
-	_ "modernc.org/sqlite"
 )
 
 // Define the schema for a sqlite database
@@ -112,10 +112,10 @@ type BlockCommits struct {
 
 func openDatabases() (*sqlx.DB, *sqlx.DB) {
 	dbPath := filepath.Join(config.DataDir, sortitionDb)
-	db := sqlx.MustOpen("sqlite", dbPath)
+	db := sqlx.MustOpen("sqlite3", dbPath)
 
 	dbPath = filepath.Join(config.DataDir, chainstateDb)
-	cdb := sqlx.MustOpen("sqlite", dbPath)
+	cdb := sqlx.MustOpen("sqlite3", dbPath)
 
 	return db, cdb
 }
@@ -213,7 +213,7 @@ func queryMinerPower() []miner {
 }
 
 func createTables(dbPath string) {
-	db := sqlx.MustOpen("sqlite", dbPath)
+	db := sqlx.MustOpen("sqlite3", dbPath)
 	defer db.Close()
 
 	tx := db.MustBegin()
@@ -518,7 +518,7 @@ func dotsTask() error {
 	processCanonicalTip(db, startBlock, blockCommits.AllCommits)
 	dot := generateGraph(lowerBound, startBlock, blockCommits)
 
-	hubDb := sqlx.MustOpen("sqlite", filepath.Join(config.DataDir, "hub.sqlite"))
+	hubDb := sqlx.MustOpen("sqlite3", filepath.Join(config.DataDir, "hub.sqlite"))
 	defer hubDb.Close()
 
 	_, err := hubDb.Exec("INSERT INTO dots (bitcoin_block_height, dot) VALUES (?, ?)",
@@ -545,7 +545,7 @@ type MempoolData struct {
 func mempoolTask() error {
 	// ideas for a potential mempool endpoint
 	// - number of "old" transactions
-	mdb := sqlx.MustOpen("sqlite", filepath.Join(config.DataDir, mempoolDb))
+	mdb := sqlx.MustOpen("sqlite3", filepath.Join(config.DataDir, mempoolDb))
 	defer mdb.Close()
 
 	mempool := []mempoolTxn{}
@@ -590,7 +590,7 @@ func mempoolTask() error {
 		return cmp.Compare(j.Count, i.Count)
 	})
 
-	hubDb := sqlx.MustOpen("sqlite", filepath.Join(config.DataDir, "hub.sqlite"))
+	hubDb := sqlx.MustOpen("sqlite3", filepath.Join(config.DataDir, "hub.sqlite"))
 	defer hubDb.Close()
 
 	var d MempoolData
@@ -628,7 +628,7 @@ func cmcTask() error {
 	json := string(body)
 	price := gjson.Get(json, "data.4847.quote.1.price")
 
-	hubDb := sqlx.MustOpen("sqlite", filepath.Join(config.DataDir, "hub.sqlite"))
+	hubDb := sqlx.MustOpen("sqlite3", filepath.Join(config.DataDir, "hub.sqlite"))
 	defer hubDb.Close()
 
 	_, err = hubDb.Exec("INSERT INTO sats_per_stx (price) VALUES (?)",
