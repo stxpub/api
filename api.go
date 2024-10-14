@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -18,8 +21,9 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jmoiron/sqlx"
 	"github.com/madflojo/tasks"
-	"github.com/pelletier/go-toml/v2"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/pelletier/go-toml/v2"
+	"github.com/stxpub/codec"
 )
 
 const (
@@ -117,6 +121,34 @@ func handleMempoolSize(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func handleTxDecode(w http.ResponseWriter, r *http.Request) {
+	// Read the request body
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read request body", http.StatusBadRequest)
+		return
+	}
+
+	// Decode the hex-encoded transaction
+	data, err := hex.DecodeString(string(body))
+	var tx codec.Transaction
+	if err := tx.Decode(bytes.NewReader(data)); err != nil {
+		http.Error(w, "Failed to decode transaction", http.StatusBadRequest)
+		return
+	}
+
+	// Set response headers
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+
+	// Encode the decoded transaction as JSON and write to response
+	if err := json.NewEncoder(w).Encode(tx); err != nil {
+		slog.Warn("Error encoding JSON", "error", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
+}
+
 func service() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -129,6 +161,7 @@ func service() http.Handler {
 	r.Get("/miners/power", handleMinerPower)
 	r.Get("/mempool/popular", handleMempoolPopular)
 	r.Get("/mempool/size", handleMempoolSize)
+	r.Post("/tx/decode", handleTxDecode)
 
 	return r
 }
