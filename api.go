@@ -84,7 +84,7 @@ func handleMinerPower(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func handleMempoolPopular(w http.ResponseWriter, r *http.Request) {
+func handleMempoolStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 
@@ -159,7 +159,7 @@ func service() http.Handler {
 	// Setup API routes
 	r.Get("/miners/viz", handleMinerViz)
 	r.Get("/miners/power", handleMinerPower)
-	r.Get("/mempool/popular", handleMempoolPopular)
+	r.Get("/mempool/stats", handleMempoolStats)
 	r.Get("/mempool/size", handleMempoolSize)
 	r.Post("/tx/decode", handleTxDecode)
 

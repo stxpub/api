@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/HdrHistogram/hdrhistogram-go"
 	"github.com/jmoiron/sqlx"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stxpub/codec"
@@ -530,6 +531,7 @@ type mempoolTxn struct {
 	Txid   string `db:"txid"`
 	TxFee  int    `db:"tx_fee"`
 	Length int    `db:"length"`
+	Age    int    `db:"age"`
 	TxBlob string `db:"tx"`
 }
 
@@ -539,7 +541,10 @@ type ContractCount struct {
 }
 
 type MempoolData struct {
-	Popular []ContractCount
+	Popular          []ContractCount
+	FeeDistribution  []hdrhistogram.Bracket
+	SizeDistribution []hdrhistogram.Bracket
+	AgeDistribution  []hdrhistogram.Bracket
 }
 
 func mempoolTask() error {
@@ -549,7 +554,8 @@ func mempoolTask() error {
 	defer mdb.Close()
 
 	mempool := []mempoolTxn{}
-	if err := mdb.Select(&mempool, "SELECT txid, tx_fee, length, LOWER(HEX(tx)) AS tx FROM mempool"); err != nil {
+	if err := mdb.Select(&mempool,
+		"SELECT txid, tx_fee, length, (unixepoch() - accept_time) as age, LOWER(HEX(tx)) AS tx FROM mempool"); err != nil {
 		log.Fatal(err)
 	}
 	// Proactively close mdb
@@ -558,7 +564,20 @@ func mempoolTask() error {
 	fees := []float32{}
 	lengths := []int{}
 	txnCounts := make(map[string]int)
+
+	// Technically fee is uncapped, but 1000 STX is a good upper bound
+	feeHist := hdrhistogram.New(1, 1_000_000_000, 1)
+	// Size can't be more than 2MB. Limit to 10MB to be safe
+	sizeHist := hdrhistogram.New(1, 10*1024*1024, 1)
+	// Age can't greater than 256 Bitcoin blocks. Limit to 500 to be safe
+	ageHist := hdrhistogram.New(1, 500*10*60, 1)
+
 	for _, txn := range mempool {
+		feeHist.RecordValue(int64(txn.TxFee))
+		sizeHist.RecordValue(int64(txn.Length))
+		ageHist.RecordValue(int64(txn.Age))
+
+		// ageHist.RecordValue(txn.)
 		fees = append(fees, float32(txn.TxFee)/1_000_000)
 		lengths = append(lengths, txn.Length)
 
@@ -581,6 +600,7 @@ func mempoolTask() error {
 			txnCounts[name] += 1
 		}
 	}
+
 	counters := []ContractCount{}
 	for k, v := range txnCounts {
 		counters = append(counters, ContractCount{k, v})
@@ -595,8 +615,14 @@ func mempoolTask() error {
 
 	var d MempoolData
 	d.Popular = counters[:25]
+	d.FeeDistribution = feeHist.CumulativeDistribution()
+	d.SizeDistribution = sizeHist.CumulativeDistribution()
+	d.AgeDistribution = ageHist.CumulativeDistribution()
+
+	// TODO: handle errors
 	blob, _ := json.Marshal(d)
-	_, err := hubDb.Exec("INSERT INTO mempool_stats (count, data) VALUES (?, ?)", len(mempool), blob)
+	_, err := hubDb.Exec("INSERT INTO mempool_stats (count, data) VALUES (?, ?)",
+		len(mempool), blob)
 	if err != nil {
 		log.Printf("Error inserting mempool stats: %v\n", err)
 	}
