@@ -14,6 +14,7 @@ require (
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2 // indirect
+	github.com/go-chi/cors v1.2.1 // indirect
 	github.com/go-chi/httplog/v2 v2.1.1 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect

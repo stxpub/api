@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/go-chi/httplog/v2"
 	"github.com/jmoiron/sqlx"
 	"github.com/madflojo/tasks"
@@ -165,6 +166,11 @@ func service() http.Handler {
 	r.Use(middleware.RealIP)
 	r.Use(httplog.RequestLogger(logger))
 	r.Use(middleware.Recoverer)
+
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins: []string{"https://hub.stx.pub"},
+		AllowedMethods: []string{"GET", "POST"},
+	}))
 
 	// Setup API routes
 	r.Get("/miners/viz", handleMinerViz)
