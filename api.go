@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httplog/v2"
 	"github.com/jmoiron/sqlx"
 	"github.com/madflojo/tasks"
 	_ "github.com/mattn/go-sqlite3"
@@ -150,10 +151,19 @@ func handleTxDecode(w http.ResponseWriter, r *http.Request) {
 }
 
 func service() http.Handler {
+	// Logger
+	logger := httplog.NewLogger("api", httplog.Options{
+		// JSON:             true,
+		LogLevel:         slog.LevelInfo,
+		Concise:          true,
+		RequestHeaders:   true,
+		MessageFieldName: "message",
+	})
+
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
+	r.Use(httplog.RequestLogger(logger))
 	r.Use(middleware.Recoverer)
 
 	// Setup API routes
