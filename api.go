@@ -35,18 +35,13 @@ const (
 )
 
 type Config struct {
-	DataDir     string
-	TemplateDir string
+	DataDir string
 }
 
 func (c Config) validate() {
 	// check that DataDir exists
 	if _, err := os.Stat(c.DataDir); os.IsNotExist(err) {
 		log.Fatalf("Data directory does not exist: %s", c.DataDir)
-	}
-	// check that TemplateDir exists
-	if _, err := os.Stat(c.TemplateDir); os.IsNotExist(err) {
-		log.Fatalf("Template directory does not exist: %s", c.TemplateDir)
 	}
 }
 
