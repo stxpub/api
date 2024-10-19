@@ -46,8 +46,6 @@ github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+
 github.com/stretchr/testify v1.7.0/go.mod h1:6Fq8oRcR53rry900zMqJjRRixrwX3KX962/h/Wwjteg=
 github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsTg=
 github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
-github.com/stxpub/codec v0.0.0-20240920184705-a1f9fa57f562 h1:ZdSlEqGaJsHbsaXcERHfxBI0XcRhCcbR0IO+v3qONC4=
-github.com/stxpub/codec v0.0.0-20240920184705-a1f9fa57f562/go.mod h1:NTsZagxm/oYTNdq0LukNGrngtpR5XBHZH7AIh0OLXOs=
 github.com/stxpub/codec v0.0.0-20241015211144-57f52b1c92e2 h1:idqruze7ri80LpndvgvUUZxq3KauVG55v8BhacRdPkg=
 github.com/stxpub/codec v0.0.0-20241015211144-57f52b1c92e2/go.mod h1:NTsZagxm/oYTNdq0LukNGrngtpR5XBHZH7AIh0OLXOs=
 github.com/tidwall/gjson v1.18.0 h1:FIDeeyB800efLX89e5a8Y0BNH+LOngJyGrIWxG2FKQY=

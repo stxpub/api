@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"slices"
@@ -130,15 +131,55 @@ func getBlockRange(db *sqlx.DB, numBlocks int) (int, int) {
 	return startBlock, lowerBound
 }
 
+func recentMinerAddresses(numBlocks int) map[string]string {
+	query := `SELECT ifnull(payments.recipient,payments.address),marf.block_commits.apparent_sender
+	    FROM block_headers left join payments on block_headers.index_block_hash = payments.index_block_hash
+	    left join marf.snapshots on block_headers.consensus_hash = marf.snapshots.consensus_hash
+	    left join marf.block_commits on marf.block_commits.sortition_id = marf.snapshots.sortition_id
+	    and marf.block_commits.block_header_hash = marf.snapshots.winning_stacks_block_hash
+	    ORDER BY block_headers.block_height desc
+	    limit ?`
+
+	dbPath := filepath.Join(config.DataDir, chainstateDb)
+	cdb := sqlx.MustOpen("sqlite3", dbPath)
+	defer cdb.Close()
+
+	addrMap := make(map[string]string)
+	dbPath = filepath.Join(config.DataDir, sortitionDb)
+	cdb.MustExec(fmt.Sprintf("ATTACH DATABASE 'file:%s' AS marf", dbPath))
+	rows, err := cdb.Query(query, numBlocks)
+	if err != nil {
+		slog.Warn("Error query miner addresses", "query", query, "error", err)
+		return addrMap
+	}
+	defer rows.Close()
+	var stxAddr, btcAddr string
+	for rows.Next() {
+		if err := rows.Scan(&stxAddr, &btcAddr); err != nil {
+			slog.Warn("Error scanning miner addresses", "error", err)
+			break
+		}
+		addrMap[stxAddr] = strings.Trim(btcAddr, "\"")
+	}
+
+	return addrMap
+}
+
 type miner struct {
-	Address   string
-	BlocksWon uint
-	BtcSpent  uint
-	StxEarnt  float32
-	WinRate   float32
+	BitcoinAddress  string
+	StacksRecipient string
+	BlocksWon       uint
+	BtcSpent        uint
+	StxEarnt        float32
+	WinRate         float32
 }
 
 func queryMinerPower() []miner {
+	const numBlocks = 144
+
+	// Map from STX address to BTC miner address
+	addrMap := recentMinerAddresses(numBlocks)
+
 	db, cdb := openDatabases()
 	defer db.Close()
 	defer cdb.Close()
@@ -148,7 +189,6 @@ func queryMinerPower() []miner {
 		log.Fatal(err)
 	}
 
-	const numBlocks = 144
 	_, lowerBound := getBlockRange(db, numBlocks)
 
 	query := `WITH RECURSIVE block_ancestors(burn_header_height,parent_block_id,address,burnchain_commit_burn,stx_reward) AS (
@@ -188,6 +228,7 @@ func queryMinerPower() []miner {
 		stxEarnt[address] += stxReward
 		numRows += 1
 	}
+
 	if !rows.NextResultSet() && rows.Err() != nil {
 		log.Fatalf("expected more result sets: %v", rows.Err())
 	}
@@ -198,11 +239,13 @@ func queryMinerPower() []miner {
 
 	miners := make([]miner, 0, len(addrCounts))
 	for addr, won := range addrCounts {
-		m := miner{Address: addr,
-			BlocksWon: won,
-			BtcSpent:  btcSpent[addr],
-			StxEarnt:  float32(stxEarnt[addr]) / 1_000_000,
-			WinRate:   (float32(won) / numBlocks) * 100,
+		m := miner{
+			StacksRecipient: addr,
+			BitcoinAddress:  addrMap[addr],
+			BlocksWon:       won,
+			BtcSpent:        btcSpent[addr],
+			StxEarnt:        float32(stxEarnt[addr]) / 1_000_000,
+			WinRate:         (float32(won) / numBlocks) * 100,
 		}
 		miners = append(miners, m)
 	}
