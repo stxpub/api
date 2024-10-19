@@ -131,8 +131,10 @@ func getBlockRange(db *sqlx.DB, numBlocks int) (int, int) {
 	return startBlock, lowerBound
 }
 
+// TODO: run this once at startup, write the mapping to disk.
+// Populate an in-memory cache and reset it every 24 hours.
 func recentMinerAddresses(numBlocks int) map[string]string {
-	query := `SELECT ifnull(payments.recipient,payments.address),marf.block_commits.apparent_sender
+	query := `SELECT DISTINCT ifnull(payments.recipient,payments.address),marf.block_commits.apparent_sender
 	    FROM block_headers left join payments on block_headers.index_block_hash = payments.index_block_hash
 	    left join marf.snapshots on block_headers.consensus_hash = marf.snapshots.consensus_hash
 	    left join marf.block_commits on marf.block_commits.sortition_id = marf.snapshots.sortition_id
@@ -159,7 +161,13 @@ func recentMinerAddresses(numBlocks int) map[string]string {
 			slog.Warn("Error scanning miner addresses", "error", err)
 			break
 		}
-		addrMap[stxAddr] = strings.Trim(btcAddr, "\"")
+		// Don't overwrite
+		slog.Debug("Trying to add mapping", "stx", stxAddr, "btc", btcAddr)
+		if existing, ok := addrMap[stxAddr]; !ok {
+			addrMap[stxAddr] = strings.Trim(btcAddr, "\"")
+		} else {
+			slog.Debug("Skipping mapping", "stx", stxAddr, "existing", existing)
+		}
 	}
 
 	return addrMap
@@ -178,7 +186,7 @@ func queryMinerPower() []miner {
 	const numBlocks = 144
 
 	// Map from STX address to BTC miner address
-	addrMap := recentMinerAddresses(numBlocks)
+	addrMap := recentMinerAddresses(10)
 
 	db, cdb := openDatabases()
 	defer db.Close()
