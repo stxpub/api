@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -46,6 +47,7 @@ func (c Config) validate() {
 }
 
 var config Config
+var minerAddressMap sync.Map
 
 type DotResponse struct {
 	Timestamp          time.Time `db:"timestamp"`
@@ -224,12 +226,26 @@ func main() {
 		log.Fatalf("Error adding task: %v", err)
 	}
 
+	// Add CMC task to update STX price
 	if _, err := scheduler.Add(&tasks.Task{
 		Interval: time.Duration(15 * time.Minute),
 		TaskFunc: wrapped("CMC task", cmcTask),
 		ErrFunc:  errFunc("cmcTask"),
 	}); err != nil {
 		log.Fatalf("Error adding task: %v", err)
+	}
+
+	// Add task to update miner address map, every 30 minutes
+	if _, err := scheduler.Add(&tasks.Task{
+		Interval: time.Duration(30 * time.Minute),
+		TaskFunc: wrapped("Update miner address map task", updateMinerAddressMapTask),
+		ErrFunc:  errFunc("updateMinerAddressMap"),
+	}); err != nil {
+		log.Fatalf("Error adding task: %v", err)
+	}
+	// Let's run it manually once to populate the map
+	if err := updateMinerAddressMapTask(); err != nil {
+		slog.Warn("Error running updateMinerAddressMapTask", "error", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(),

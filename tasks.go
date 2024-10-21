@@ -133,7 +133,7 @@ func getBlockRange(db *sqlx.DB, numBlocks int) (int, int) {
 
 // TODO: run this once at startup, write the mapping to disk.
 // Populate an in-memory cache and reset it every 24 hours.
-func recentMinerAddresses(numBlocks int) map[string]string {
+func updateMinerAddressMapTask() error {
 	query := `SELECT DISTINCT ifnull(payments.recipient,payments.address),marf.block_commits.apparent_sender
 	    FROM block_headers left join payments on block_headers.index_block_hash = payments.index_block_hash
 	    left join marf.snapshots on block_headers.consensus_hash = marf.snapshots.consensus_hash
@@ -146,31 +146,32 @@ func recentMinerAddresses(numBlocks int) map[string]string {
 	cdb := sqlx.MustOpen("sqlite3", dbPath)
 	defer cdb.Close()
 
-	addrMap := make(map[string]string)
 	dbPath = filepath.Join(config.DataDir, sortitionDb)
 	cdb.MustExec(fmt.Sprintf("ATTACH DATABASE 'file:%s' AS marf", dbPath))
-	rows, err := cdb.Query(query, numBlocks)
+	rows, err := cdb.Query(query, 10)
 	if err != nil {
 		slog.Warn("Error query miner addresses", "query", query, "error", err)
-		return addrMap
+		return err
 	}
 	defer rows.Close()
+
+	// Clear the existing map
+	minerAddressMap.Clear()
+
 	var stxAddr, btcAddr string
 	for rows.Next() {
 		if err := rows.Scan(&stxAddr, &btcAddr); err != nil {
 			slog.Warn("Error scanning miner addresses", "error", err)
 			break
 		}
+		btcAddr = strings.Trim(btcAddr, "\"")
 		// Don't overwrite
 		slog.Debug("Trying to add mapping", "stx", stxAddr, "btc", btcAddr)
-		if existing, ok := addrMap[stxAddr]; !ok {
-			addrMap[stxAddr] = strings.Trim(btcAddr, "\"")
-		} else {
-			slog.Debug("Skipping mapping", "stx", stxAddr, "existing", existing)
+		if old, exists := minerAddressMap.LoadOrStore(stxAddr, btcAddr); exists {
+			slog.Debug("Skipping mapping", "stx", stxAddr, "old", old)
 		}
 	}
-
-	return addrMap
+	return nil
 }
 
 type miner struct {
@@ -184,9 +185,6 @@ type miner struct {
 
 func queryMinerPower() []miner {
 	const numBlocks = 144
-
-	// Map from STX address to BTC miner address
-	addrMap := recentMinerAddresses(10)
 
 	db, cdb := openDatabases()
 	defer db.Close()
@@ -247,9 +245,13 @@ func queryMinerPower() []miner {
 
 	miners := make([]miner, 0, len(addrCounts))
 	for addr, won := range addrCounts {
+		btcAddr := ""
+		if v, ok := minerAddressMap.Load(addr); ok {
+			btcAddr = v.(string)
+		}
 		m := miner{
 			StacksRecipient: addr,
-			BitcoinAddress:  addrMap[addr],
+			BitcoinAddress:  btcAddr,
 			BlocksWon:       won,
 			BtcSpent:        btcSpent[addr],
 			StxEarnt:        float32(stxEarnt[addr]) / 1_000_000,
