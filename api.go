@@ -227,13 +227,15 @@ func main() {
 		log.Fatalf("Error adding task: %v", err)
 	}
 
-	// Add CMC task to update STX price
-	if _, err := scheduler.Add(&tasks.Task{
-		Interval: time.Duration(15 * time.Minute),
-		TaskFunc: wrapped("CMC task", cmcTask),
-		ErrFunc:  errFunc("cmcTask"),
-	}); err != nil {
-		log.Fatalf("Error adding task: %v", err)
+	// Add CMC task to update STX price, only if CMCKey is non-empty.
+	if config.CMCKey != "" {
+		if _, err := scheduler.Add(&tasks.Task{
+			Interval: time.Duration(15 * time.Minute),
+			TaskFunc: wrapped("CMC task", cmcTask),
+			ErrFunc:  errFunc("cmcTask"),
+		}); err != nil {
+			log.Fatalf("Error adding task: %v", err)
+		}
 	}
 
 	// Add task to update miner address map, every 30 minutes
