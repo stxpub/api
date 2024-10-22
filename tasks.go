@@ -692,8 +692,8 @@ func cmcTask() error {
 		log.Printf("Error fetching STX price: %v\n", err)
 		return err
 	}
-	// TODO: parameterize the API key
-	req.Header.Set("X-CMC_PRO_API_KEY", "720851f1-f244-4170-837f-39b7765e3012")
+
+	req.Header.Set("X-CMC_PRO_API_KEY", config.CMCKey)
 	resp, err := client.Do(req)
 	if err != nil {
 		log.Fatal(err)

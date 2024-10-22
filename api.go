@@ -37,6 +37,7 @@ const (
 
 type Config struct {
 	DataDir string
+	CMCKey  string
 }
 
 func (c Config) validate() {
