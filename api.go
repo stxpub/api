@@ -58,7 +58,6 @@ type DotResponse struct {
 
 func handleMinerViz(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	hubDb := sqlx.MustOpen("sqlite3", filepath.Join(config.DataDir, "hub.sqlite?mode=ro"))
 	defer hubDb.Close()
@@ -77,7 +76,6 @@ func handleMinerViz(w http.ResponseWriter, r *http.Request) {
 
 func handleMinerPower(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	if err := json.NewEncoder(w).Encode(queryMinerPower()); err != nil {
 		slog.Warn("Error encoding JSON", "error", err)
@@ -86,7 +84,6 @@ func handleMinerPower(w http.ResponseWriter, r *http.Request) {
 
 func handleMempoolStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	hubDb := sqlx.MustOpen("sqlite3", filepath.Join(config.DataDir, "hub.sqlite?mode=ro"))
 	defer hubDb.Close()
@@ -102,7 +99,6 @@ func handleMempoolStats(w http.ResponseWriter, r *http.Request) {
 
 func handleMempoolSize(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	hubDb := sqlx.MustOpen("sqlite3", filepath.Join(config.DataDir, "hub.sqlite?mode=ro"))
 	defer hubDb.Close()
