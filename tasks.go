@@ -84,6 +84,7 @@ type BlockCommit struct {
 	parent          string
 	stacksHeight    int
 	blockHash       string
+	memo            string
 	won             bool
 	canonical       bool
 	tip             bool
@@ -297,7 +298,8 @@ func fetchCommitData(db *sqlx.DB, lower_bound_height, start_block int) BlockComm
 			block_height,
 			burn_fee,
 			parent_block_ptr,
-			parent_vtxindex
+			parent_vtxindex,
+			memo
 	FROM
 			block_commits
 	WHERE
@@ -322,7 +324,8 @@ func fetchCommitData(db *sqlx.DB, lower_bound_height, start_block int) BlockComm
 			&commit.burnBlockHeight,
 			&commit.spend,
 			&commit.parentBlockPtr,
-			&commit.parentVtxindex); err != nil {
+			&commit.parentVtxindex,
+			&commit.memo); err != nil {
 			log.Fatal(err)
 		}
 		if commit.sender == "" {
@@ -489,8 +492,8 @@ func makeNodeAttributes(commit *BlockCommit) AttributeMap {
 	attrs["color"] = "black"
 	attrs["penwidth"] = "1"
 	attrs["URL"] = `"https://mempool.space/tx/` + commit.txid + `"`
-	label := fmt.Sprintf("⛏️ %s, \n🔗 %d\n💸 %dK sats",
-		strings.Trim(commit.sender, `"`)[:8], commit.stacksHeight, commit.spend/1000)
+	label := fmt.Sprintf("⛏️ %s, \n🔗 %d\n💸 %dK sats\nmemo: %s",
+		strings.Trim(commit.sender, `"`)[:8], commit.stacksHeight, commit.spend/1000, commit.memo)
 	if commit.won {
 		attrs["color"] = "blue"
 		attrs["penwidth"] = "4"

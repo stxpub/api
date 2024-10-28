@@ -247,6 +247,9 @@ func main() {
 		slog.Warn("Error running updateMinerAddressMapTask", "error", err)
 	}
 
+	// Run dot task at startup, ignore errors for now
+	dotsTask()
+
 	ctx, stop := signal.NotifyContext(context.Background(),
 		syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 	defer stop()
