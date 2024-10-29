@@ -200,7 +200,9 @@ func main() {
 	}
 	config.validate()
 
+	// Setup the tables
 	createTables(filepath.Join(config.DataDir, "hub.sqlite"))
+
 	// Start the Scheduler
 	scheduler := tasks.New()
 	defer scheduler.Stop()

@@ -71,8 +71,13 @@ func (attrs AttributeMap) fmt() string {
 	return w.String()
 }
 
+type hashkey struct {
+	blockHeight int
+	vtxindex    int
+}
+
 type BlockCommit struct {
-	blockHeaderHash string
+	burnHeaderHash  string
 	txid            string
 	vtxindex        int
 	sender          string
@@ -81,19 +86,22 @@ type BlockCommit struct {
 	sortitionId     string
 	parentBlockPtr  int
 	parentVtxindex  int
-	parent          string
-	stacksHeight    int
-	blockHash       string
 	memo            string
-	won             bool
-	canonical       bool
-	tip             bool
-	coinbaseEarned  int
-	feesEarned      int
-	cost            BlockCost
-	blockSize       int
-	potentialTip    bool
-	nextTip         bool
+	// txid of parent block commit
+	parent         string
+	stacksHeight   int
+	blockHash      string
+	won            bool
+	canonical      bool
+	tip            bool
+	coinbaseEarned int
+	feesEarned     int
+	cost           BlockCost
+	blockSize      int
+	potentialTip   bool
+	nextTip        bool
+	key            hashkey
+	parentKey      hashkey
 }
 
 func (cost *BlockCost) getFullness() float32 {
@@ -108,9 +116,12 @@ func (cost *BlockCost) getFullness() float32 {
 }
 
 type BlockCommits struct {
+	// Map from sortition id to ??
 	SortitionFeesMap map[string]int
-	AllCommits       map[string]*BlockCommit
-	CommitsByBlock   map[int][]*BlockCommit
+	// Map from txid to block commit
+	AllCommits map[string]*BlockCommit
+	// List of block commits by block height
+	CommitsByBlock map[int][]*BlockCommit
 }
 
 func openDatabases() (*sqlx.DB, *sqlx.DB) {
@@ -136,11 +147,11 @@ func getBlockRange(db *sqlx.DB, numBlocks int) (int, int) {
 // Populate an in-memory cache and reset it every 24 hours.
 func updateMinerAddressMapTask() error {
 	query := `SELECT DISTINCT ifnull(payments.recipient,payments.address),marf.block_commits.apparent_sender
-	    FROM block_headers left join payments on block_headers.index_block_hash = payments.index_block_hash
-	    left join marf.snapshots on block_headers.consensus_hash = marf.snapshots.consensus_hash
+	    FROM nakamoto_block_headers left join payments on nakamoto_block_headers.index_block_hash = payments.index_block_hash
+	    left join marf.snapshots on nakamoto_block_headers.consensus_hash = marf.snapshots.consensus_hash
 	    left join marf.block_commits on marf.block_commits.sortition_id = marf.snapshots.sortition_id
 	    and marf.block_commits.block_header_hash = marf.snapshots.winning_stacks_block_hash
-	    ORDER BY block_headers.block_height desc
+	    ORDER BY nakamoto_block_headers.block_height desc
 	    limit ?`
 
 	dbPath := filepath.Join(config.DataDir, chainstateDb)
@@ -199,11 +210,11 @@ func queryMinerPower() []miner {
 	_, lowerBound := getBlockRange(db, numBlocks)
 
 	query := `WITH RECURSIVE block_ancestors(burn_header_height,parent_block_id,address,burnchain_commit_burn,stx_reward) AS (
-    	SELECT block_headers.burn_header_height,block_headers.parent_block_id,payments.address,payments.burnchain_commit_burn,(payments.coinbase + payments.tx_fees_anchored + payments.tx_fees_streamed) AS stx_reward
-        FROM block_headers JOIN payments ON block_headers.index_block_hash = payments.index_block_hash WHERE payments.index_block_hash = ?
+    	SELECT nakamoto_block_headers.burn_header_height,nakamoto_block_headers.parent_block_id,payments.address,payments.burnchain_commit_burn,(payments.coinbase + payments.tx_fees_anchored + payments.tx_fees_streamed) AS stx_reward
+        FROM nakamoto_block_headers JOIN payments ON nakamoto_block_headers.index_block_hash = payments.index_block_hash WHERE payments.index_block_hash = ?
     	UNION ALL
-        SELECT block_headers.burn_header_height,block_headers.parent_block_id,payments.address,payments.burnchain_commit_burn,(payments.coinbase + payments.tx_fees_anchored + payments.tx_fees_streamed) AS stx_reward
-        FROM (block_headers JOIN payments ON block_headers.index_block_hash = payments.index_block_hash) JOIN block_ancestors ON block_headers.index_block_hash = block_ancestors.parent_block_id
+        SELECT nakamoto_block_headers.burn_header_height,nakamoto_block_headers.parent_block_id,payments.address,payments.burnchain_commit_burn,(payments.coinbase + payments.tx_fees_anchored + payments.tx_fees_streamed) AS stx_reward
+        FROM (nakamoto_block_headers JOIN payments ON nakamoto_block_headers.index_block_hash = payments.index_block_hash) JOIN block_ancestors ON nakamoto_block_headers.index_block_hash = block_ancestors.parent_block_id
     )
     SELECT block_ancestors.burn_header_height,block_ancestors.address,block_ancestors.burnchain_commit_burn,block_ancestors.stx_reward
     FROM block_ancestors LIMIT ?`
@@ -279,18 +290,14 @@ func createTables(dbPath string) {
 }
 
 func fetchCommitData(db *sqlx.DB, lower_bound_height, start_block int) BlockCommits {
-	type hashkey struct {
-		block_height int
-		vtxindex     int
-	}
-
-	hashMap := make(map[hashkey]string)
 	sortitionFeesMap := make(map[string]int)
 	allCommits := make(map[string]*BlockCommit)
 	commitsByBlock := make(map[int][]*BlockCommit)
+	// Map (block height, vtxindex) tuples to block commit txid
+	hashMap := make(map[hashkey]string)
 
 	query := `SELECT
-			block_header_hash,
+			burn_header_hash,
 			txid,
 			apparent_sender,
 			sortition_id,
@@ -316,7 +323,7 @@ func fetchCommitData(db *sqlx.DB, lower_bound_height, start_block int) BlockComm
 	for rows.Next() {
 		var commit BlockCommit
 		if err := rows.Scan(
-			&commit.blockHeaderHash,
+			&commit.burnHeaderHash,
 			&commit.txid,
 			&commit.sender,
 			&commit.sortitionId,
@@ -328,30 +335,29 @@ func fetchCommitData(db *sqlx.DB, lower_bound_height, start_block int) BlockComm
 			&commit.memo); err != nil {
 			log.Fatal(err)
 		}
-		if commit.sender == "" {
-			log.Printf("Found empty sender for commit: %v\n", commit)
-		}
+		commit.key = hashkey{commit.burnBlockHeight, commit.vtxindex}
+		commit.parentKey = hashkey{commit.parentBlockPtr, commit.parentVtxindex}
 
-		allCommits[commit.blockHeaderHash] = &commit
-		parent, exists := hashMap[hashkey{commit.parentBlockPtr, commit.parentVtxindex}]
+		allCommits[commit.txid] = &commit
+		parent, exists := hashMap[commit.parentKey]
 		if exists {
-			if parent == "" {
-				log.Fatalf("Found empty parent for commit %s: %v\n", commit.blockHeaderHash, commit)
-			}
 			commit.parent = parent
 		}
-		hashMap[hashkey{commit.burnBlockHeight, commit.vtxindex}] = commit.blockHeaderHash
-		sortitionFeesMap[commit.sortitionId] += commit.spend
-
-		if _, exists := commitsByBlock[commit.burnBlockHeight]; !exists {
-			commitsByBlock[commit.burnBlockHeight] = make([]*BlockCommit, 0)
-		}
-		commitsByBlock[commit.burnBlockHeight] = append(
-			commitsByBlock[commit.burnBlockHeight], &commit)
+		hashMap[commit.key] = commit.txid
 	}
 
 	if !rows.NextResultSet() && rows.Err() != nil {
 		log.Fatalf("expected more result sets: %v", rows.Err())
+	}
+
+	// Now that we have all the commits, group them by block
+	for _, commit := range allCommits {
+		blockHeight := commit.burnBlockHeight
+		if _, exists := commitsByBlock[blockHeight]; !exists {
+			commitsByBlock[blockHeight] = make([]*BlockCommit, 0)
+		}
+		commitsByBlock[blockHeight] = append(commitsByBlock[blockHeight], commit)
+		sortitionFeesMap[commit.sortitionId] += commit.spend
 	}
 
 	return BlockCommits{
@@ -362,32 +368,29 @@ func fetchCommitData(db *sqlx.DB, lower_bound_height, start_block int) BlockComm
 }
 
 func processWinningBlocks(db *sqlx.DB, cdb *sqlx.DB, lower_bound_height, start_block int, blockCommits BlockCommits) {
+	commits := blockCommits.AllCommits
+	blockCommitsMap := blockCommits.CommitsByBlock
+
 	for block_height := lower_bound_height; block_height <= start_block; block_height++ {
 		var stacks_height int
 		var winningBlockTxid, consensus_hash string
 
-		row := db.QueryRow("SELECT winning_block_txid, stacks_block_height, consensus_hash FROM snapshots WHERE block_height = ?;",
+		row := db.QueryRow("SELECT winning_block_txid, canonical_stacks_tip_height, consensus_hash FROM snapshots WHERE block_height = ?;",
 			block_height)
 		if err := row.Scan(&winningBlockTxid, &stacks_height, &consensus_hash); err != nil {
 			log.Fatal(err)
 		}
-
-		commits := blockCommits.AllCommits
-		blockCommitsMap := blockCommits.CommitsByBlock
 
 		if _, exists := blockCommitsMap[block_height]; !exists {
 			log.Printf("No block commits for block height %d\n", block_height)
 			continue // skip blocks that don't have any commits
 		}
 		block_commits := blockCommitsMap[block_height]
-
 		for _, commit := range block_commits {
+			commit.stacksHeight = stacks_height
 			parent_commit, exists := commits[commit.parent]
 			if commit.txid == winningBlockTxid {
 				processWinningCommit(cdb, commit, parent_commit, exists, stacks_height, consensus_hash)
-			}
-			if exists {
-				commit.stacksHeight = parent_commit.stacksHeight + 1
 			}
 		}
 	}
@@ -402,28 +405,30 @@ func processWinningCommit(cdb *sqlx.DB, commit *BlockCommit, parent_commit *Bloc
 	}
 	// If stacks_height > 0, populate coinbase, fee and block size
 	if stacks_height > 0 {
-		var tx_fees_anchored, tx_fees_streamed int
-		row := cdb.QueryRow("SELECT block_hash, coinbase, tx_fees_anchored, tx_fees_streamed FROM payments WHERE consensus_hash = ?;",
-			consensus_hash)
-		if err := row.Scan(&commit.blockHash, &commit.coinbaseEarned, &tx_fees_anchored, &tx_fees_streamed); err != nil {
-			log.Fatal(err)
+		row := cdb.QueryRow("SELECT block_hash, coinbase FROM payments WHERE consensus_hash = ?;", consensus_hash)
+		if err := row.Scan(&commit.blockHash, &commit.coinbaseEarned); err != nil {
+			slog.Warn("Error fetching coinbase", "consensus_hash", consensus_hash, "error", err)
 		}
-		commit.feesEarned = tx_fees_anchored + tx_fees_streamed
+		if err := cdb.Get(&commit.feesEarned,
+			"SELECT tenure_tx_fees FROM nakamoto_block_headers WHERE burn_header_height = ? ORDER BY height_in_tenure DESC LIMIT 1",
+			commit.burnBlockHeight); err != nil {
+			slog.Warn("No tenure_tx_fees for block", "burnBlockHeight", commit.burnBlockHeight, "error", err)
+		}
 
 		var costJson []byte
-		row = cdb.QueryRow("SELECT cost, block_size FROM block_headers WHERE block_hash = ?;", commit.blockHash)
+		row = cdb.QueryRow("SELECT cost, block_size FROM nakamoto_block_headers WHERE block_hash = ?;", commit.blockHash)
 		if err := row.Scan(&costJson, &commit.blockSize); err != nil {
-			log.Fatal(err)
+			slog.Warn("Error fetching cost and block size", "block_hash", commit.blockHash, "error", err)
 		}
 		if err := json.Unmarshal(costJson, &commit.cost); err != nil {
-			log.Fatal(err)
+			slog.Warn("Error unmarshalling cost", "costJson", string(costJson), "error", err)
 		}
 	}
 }
 
 func processCanonicalTip(db *sqlx.DB, start_block int, commits map[string]*BlockCommit) {
 	var canonical_tip string
-	if err := db.Get(&canonical_tip, "SELECT canonical_stacks_tip_hash FROM snapshots WHERE block_height = ?;", start_block); err != nil {
+	if err := db.Get(&canonical_tip, "SELECT winning_block_txid FROM snapshots WHERE block_height = ?;", start_block); err != nil {
 		log.Fatal(err)
 	}
 	tip := canonical_tip
@@ -460,21 +465,22 @@ func generateGraph(lower_bound_height, start_block int, blockCommits BlockCommit
 		g.WriteString(fmt.Sprintf("\tsubgraph cluster_block_%d {\n", block_height))
 		g.WriteString(fmt.Sprintf("URL=\"https://mempool.space/block/%d\"\n", block_height))
 		sortition_spend := 0
+
 		for _, commit := range block_commits_map[block_height] {
 			if sortition_spend == 0 {
 				sortition_spend = sortition_fees_map[commit.sortitionId]
 			} else if sortition_spend != sortition_fees_map[commit.sortitionId] {
 				log.Printf("Previous sortition spend %d does not match spend %d in commit %s\n",
-					sortition_spend, sortition_fees_map[commit.sortitionId], commit.blockHeaderHash)
+					sortition_spend, sortition_fees_map[commit.sortitionId], commit.burnHeaderHash)
 			}
 			attrs := makeNodeAttributes(commit)
 			g.WriteString(fmt.Sprintf("\t\tcommit_%s %s\n",
-				commit.blockHeaderHash, attrs.fmt()))
+				commit.txid, attrs.fmt()))
 
 			if commit.parent != "" {
 				edgeAttrs := makeEdgeAttributes(commit, commits[commit.parent], last_height)
 				g.WriteString(fmt.Sprintf("commit_%s -> commit_%s %s\n",
-					commit.parent, commit.blockHeaderHash, edgeAttrs.fmt()))
+					commit.parent, commit.txid, edgeAttrs.fmt()))
 			}
 		}
 		g.WriteString(fmt.Sprintf("\t\tlabel = \"₿ %d\n💰 %dK sats\"\n",
