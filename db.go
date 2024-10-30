@@ -119,7 +119,7 @@ func getBlocks() []Block {
 		burn_header_height
 	FROM nakamoto_block_headers
 	WHERE burn_header_height > ?
-	ORDER BY block_height DESC
+	ORDER BY block_height ASC
 	`
 	var blocks []Block
 	err = db.Select(&blocks, query, maxBurnHeight-10)
