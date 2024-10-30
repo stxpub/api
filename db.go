@@ -122,7 +122,7 @@ func getBlocks() []Block {
 	ORDER BY block_height ASC
 	`
 	var blocks []Block
-	err = db.Select(&blocks, query, maxBurnHeight-10)
+	err = db.Select(&blocks, query, maxBurnHeight-20)
 	if err != nil {
 		slog.Error("Error fetching blocks", "error", err)
 		return nil
