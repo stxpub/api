@@ -29,12 +29,6 @@ import (
 	"github.com/stxpub/codec"
 )
 
-const (
-	sortitionDb  = "burnchain/sortition/marf.sqlite?mode=ro"
-	chainstateDb = "chainstate/vm/index.sqlite?mode=ro"
-	mempoolDb    = "chainstate/mempool.sqlite?mode=ro"
-)
-
 type Config struct {
 	DataDir string
 	CMCKey  string
@@ -135,13 +129,21 @@ func handleTxDecode(w http.ResponseWriter, r *http.Request) {
 
 	// Set response headers
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// Encode the decoded transaction as JSON and write to response
 	if err := json.NewEncoder(w).Encode(tx); err != nil {
 		slog.Warn("Error encoding JSON", "error", err)
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
 		return
+	}
+}
+
+func handleBlocks(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+
+	blocks := getBlocks()
+	if err := json.NewEncoder(w).Encode(blocks); err != nil {
+		slog.Warn("Error encoding JSON", "error", err)
 	}
 }
 
@@ -162,7 +164,7 @@ func service() http.Handler {
 	r.Use(middleware.Recoverer)
 
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{"https://hub.stx.pub"},
+		AllowedOrigins: []string{"https://hub.stx.pub", "*"},
 		AllowedMethods: []string{"GET", "POST"},
 	}))
 
@@ -171,6 +173,7 @@ func service() http.Handler {
 	r.Get("/miners/power", handleMinerPower)
 	r.Get("/mempool/stats", handleMempoolStats)
 	r.Get("/mempool/size", handleMempoolSize)
+	r.Get("/blocks", handleBlocks)
 	r.Post("/tx/decode", handleTxDecode)
 
 	return r

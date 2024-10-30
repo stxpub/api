@@ -23,34 +23,6 @@ import (
 	"github.com/tidwall/gjson"
 )
 
-// Define the schema for a sqlite database
-// containing an auto-incrementing id, a timestamp and a string.
-// The id is the primary key.
-// The timestamp is the time the row was inserted.
-// The string is the data.
-const dotsSchema = `
-CREATE TABLE IF NOT EXISTS dots (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-	bitcoin_block_height INTEGER,
-	dot TEXT NOT NULL
-);`
-
-const mempoolStatsSchema = `
-CREATE TABLE IF NOT EXISTS mempool_stats (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-	count INTEGER,
-	data JSONB
-);`
-
-const stxPriceSchema = `
-CREATE TABLE IF NOT EXISTS sats_per_stx (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-	price REAL
-);`
-
 type BlockCost struct {
 	ReadLength  int `json:"read_length"`
 	ReadCount   int `json:"read_count"`
@@ -96,23 +68,10 @@ type BlockCommit struct {
 	tip            bool
 	coinbaseEarned int
 	feesEarned     int
-	cost           BlockCost
-	blockSize      int
 	potentialTip   bool
 	nextTip        bool
 	key            hashkey
 	parentKey      hashkey
-}
-
-func (cost *BlockCost) getFullness() float32 {
-	fullness := max(
-		float32(cost.ReadLength)/100_000_000,
-		float32(cost.ReadCount)/15_000,
-		float32(cost.WriteLength)/15_000_000,
-		float32(cost.WriteCount)/15_000,
-		float32(cost.Runtime)/5_000_000_000,
-	)
-	return fullness * 100
 }
 
 type BlockCommits struct {
@@ -278,17 +237,6 @@ func queryMinerPower() []miner {
 	return miners
 }
 
-func createTables(dbPath string) {
-	db := sqlx.MustOpen("sqlite3", dbPath)
-	defer db.Close()
-
-	tx := db.MustBegin()
-	db.MustExec(dotsSchema)
-	db.MustExec(mempoolStatsSchema)
-	db.MustExec(stxPriceSchema)
-	tx.Commit()
-}
-
 func fetchCommitData(db *sqlx.DB, lower_bound_height, start_block int) BlockCommits {
 	sortitionFeesMap := make(map[string]int)
 	allCommits := make(map[string]*BlockCommit)
@@ -414,15 +362,6 @@ func processWinningCommit(cdb *sqlx.DB, commit *BlockCommit, parent_commit *Bloc
 			commit.burnBlockHeight); err != nil {
 			slog.Warn("No tenure_tx_fees for block", "burnBlockHeight", commit.burnBlockHeight, "error", err)
 		}
-
-		var costJson []byte
-		row = cdb.QueryRow("SELECT cost, block_size FROM nakamoto_block_headers WHERE block_hash = ?;", commit.blockHash)
-		if err := row.Scan(&costJson, &commit.blockSize); err != nil {
-			slog.Warn("Error fetching cost and block size", "block_hash", commit.blockHash, "error", err)
-		}
-		if err := json.Unmarshal(costJson, &commit.cost); err != nil {
-			slog.Warn("Error unmarshalling cost", "costJson", string(costJson), "error", err)
-		}
 	}
 }
 
@@ -498,13 +437,11 @@ func makeNodeAttributes(commit *BlockCommit) AttributeMap {
 	attrs["color"] = "black"
 	attrs["penwidth"] = "1"
 	attrs["URL"] = `"https://mempool.space/tx/` + commit.txid + `"`
-	label := fmt.Sprintf("⛏️ %s, \n🔗 %d\n💸 %dK sats\nmemo: %s",
-		strings.Trim(commit.sender, `"`)[:8], commit.stacksHeight, commit.spend/1000, commit.memo)
+	label := fmt.Sprintf("⛏️ %s, \n🔗 %d\n💸 %dK sats",
+		strings.Trim(commit.sender, `"`)[:8], commit.stacksHeight, commit.spend/1000)
 	if commit.won {
 		attrs["color"] = "blue"
 		attrs["penwidth"] = "4"
-		label += fmt.Sprintf("\n%.2f%% full\n🚧 %.2f KB",
-			commit.cost.getFullness(), float32(commit.blockSize)/(2*1024))
 	}
 	if commit.nextTip {
 		attrs["color"] = "green"
