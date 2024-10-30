@@ -55,6 +55,7 @@ type Block struct {
 	TenureTxFees     int        `db:"tenure_tx_fees"`
 	BlockHeight      int        `db:"block_height"`
 	BurnHeaderHeight int        `db:"burn_header_height"`
+	Timestamp        int64      `db:"timestamp"`
 }
 
 // Scan implements the sql.Scanner interface for CostVector
@@ -116,7 +117,8 @@ func getBlocks() []Block {
 		tenure_changed,
 		tenure_tx_fees,
 		block_height,
-		burn_header_height
+		burn_header_height,
+		timestamp
 	FROM nakamoto_block_headers
 	WHERE burn_header_height > ?
 	ORDER BY block_height ASC
