@@ -247,13 +247,24 @@ func main() {
 	}); err != nil {
 		log.Fatalf("Error adding task: %v", err)
 	}
+
+	// Add pruneTask to run every 24 hours
+	if _, err := scheduler.Add(&tasks.Task{
+		Interval: time.Duration(24 * time.Hour),
+		TaskFunc: wrapped("Prune task", pruneTask),
+		ErrFunc:  errFunc("pruneTask"),
+	}); err != nil {
+		log.Fatalf("Error adding task: %v", err)
+	}
+
 	// Let's run it manually once to populate the map
 	if err := updateMinerAddressMapTask(); err != nil {
 		slog.Warn("Error running updateMinerAddressMapTask", "error", err)
 	}
-
 	// Run dot task at startup, ignore errors for now
 	dotsTask()
+	// Let's also prune at startup
+	pruneTask()
 
 	ctx, stop := signal.NotifyContext(context.Background(),
 		syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)

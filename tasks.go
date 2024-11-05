@@ -661,3 +661,20 @@ func cmcTask() error {
 
 	return err
 }
+
+func pruneTask() error {
+	hubDb := sqlx.MustOpen("sqlite3", filepath.Join(config.DataDir, "hub.sqlite"))
+	defer hubDb.Close()
+
+	tx := hubDb.MustBegin()
+	defer tx.Rollback()
+
+	tx.MustExec("DELETE FROM mempool_stats WHERE timestamp < datetime('now', '-2 days')")
+	tx.MustExec("DELETE FROM dots WHERE timestamp < datetime('now', '-2 days')")
+	tx.Commit()
+
+	// Can't vacuum from within a transactions, sqlite panics.
+	// See https://www.sqlite.org/lang_vacuum.html
+	_, err := hubDb.Exec("VACUUM")
+	return err
+}
