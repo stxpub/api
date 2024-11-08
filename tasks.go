@@ -102,49 +102,6 @@ func getBlockRange(db *sqlx.DB, numBlocks int) (int, int) {
 	return startBlock, lowerBound
 }
 
-// TODO: run this once at startup, write the mapping to disk.
-// Populate an in-memory cache and reset it every 24 hours.
-func updateMinerAddressMapTask() error {
-	query := `SELECT DISTINCT ifnull(payments.recipient,payments.address),marf.block_commits.apparent_sender
-	    FROM nakamoto_block_headers left join payments on nakamoto_block_headers.index_block_hash = payments.index_block_hash
-	    left join marf.snapshots on nakamoto_block_headers.consensus_hash = marf.snapshots.consensus_hash
-	    left join marf.block_commits on marf.block_commits.sortition_id = marf.snapshots.sortition_id
-	    and marf.block_commits.block_header_hash = marf.snapshots.winning_stacks_block_hash
-	    ORDER BY nakamoto_block_headers.block_height desc
-	    limit ?`
-
-	dbPath := filepath.Join(config.DataDir, chainstateDb)
-	cdb := sqlx.MustOpen("sqlite3", dbPath)
-	defer cdb.Close()
-
-	dbPath = filepath.Join(config.DataDir, sortitionDb)
-	cdb.MustExec(fmt.Sprintf("ATTACH DATABASE 'file:%s' AS marf", dbPath))
-	rows, err := cdb.Query(query, 10)
-	if err != nil {
-		slog.Warn("Error query miner addresses", "query", query, "error", err)
-		return err
-	}
-	defer rows.Close()
-
-	// Clear the existing map
-	minerAddressMap.Clear()
-
-	var stxAddr, btcAddr string
-	for rows.Next() {
-		if err := rows.Scan(&stxAddr, &btcAddr); err != nil {
-			slog.Warn("Error scanning miner addresses", "error", err)
-			break
-		}
-		btcAddr = strings.Trim(btcAddr, "\"")
-		// Don't overwrite
-		slog.Debug("Trying to add mapping", "stx", stxAddr, "btc", btcAddr)
-		if old, exists := minerAddressMap.LoadOrStore(stxAddr, btcAddr); exists {
-			slog.Debug("Skipping mapping", "stx", stxAddr, "old", old)
-		}
-	}
-	return nil
-}
-
 type miner struct {
 	BitcoinAddress  string
 	StacksRecipient string
@@ -169,15 +126,23 @@ func queryMinerPower() []miner {
 	_, lowerBound := getBlockRange(db, numBlocks)
 
 	query := `WITH RECURSIVE block_ancestors(burn_header_height,parent_block_id,address,burnchain_commit_burn,stx_reward) AS (
-    	SELECT nakamoto_block_headers.burn_header_height,nakamoto_block_headers.parent_block_id,payments.address,payments.burnchain_commit_burn,(payments.coinbase + payments.tx_fees_anchored + payments.tx_fees_streamed) AS stx_reward
-        FROM nakamoto_block_headers JOIN payments ON nakamoto_block_headers.index_block_hash = payments.index_block_hash WHERE payments.index_block_hash = ?
-    	UNION ALL
-        SELECT nakamoto_block_headers.burn_header_height,nakamoto_block_headers.parent_block_id,payments.address,payments.burnchain_commit_burn,(payments.coinbase + payments.tx_fees_anchored + payments.tx_fees_streamed) AS stx_reward
-        FROM (nakamoto_block_headers JOIN payments ON nakamoto_block_headers.index_block_hash = payments.index_block_hash) JOIN block_ancestors ON nakamoto_block_headers.index_block_hash = block_ancestors.parent_block_id
-    )
+SELECT
+		nakamoto_block_headers.burn_header_height,nakamoto_block_headers.parent_block_id,
+		payments.address,payments.burnchain_commit_burn,payments.coinbase AS stx_reward
+FROM nakamoto_block_headers
+JOIN payments
+ON nakamoto_block_headers.index_block_hash = payments.index_block_hash
+WHERE payments.index_block_hash = ?
+UNION ALL
+SELECT
+		nakamoto_block_headers.burn_header_height,nakamoto_block_headers.parent_block_id,
+		payments.address,payments.burnchain_commit_burn,payments.coinbase AS stx_reward
+FROM (nakamoto_block_headers JOIN payments ON nakamoto_block_headers.index_block_hash = payments.index_block_hash)
+)
     SELECT block_ancestors.burn_header_height,block_ancestors.address,block_ancestors.burnchain_commit_burn,block_ancestors.stx_reward
-    FROM block_ancestors LIMIT ?`
+    FROM block_ancestors ORDER BY block_ancestors.burn_header_height DESC LIMIT ?`
 
+	slog.Debug("Querying", "query", query, "tip", tip, "numBlocks", numBlocks)
 	rows, err := cdb.Query(query, tip, numBlocks)
 	if err != nil {
 		log.Fatal(err)
@@ -196,8 +161,9 @@ func queryMinerPower() []miner {
 		if err := rows.Scan(&burnHeight, &address, &commitBurn, &stxReward); err != nil {
 			log.Fatal(err)
 		}
+		slog.Debug("Processing", "burnHeight", burnHeight, "address", address, "commitBurn", commitBurn,
+			"stxReward", stxReward, "lowerBound", lowerBound)
 		if burnHeight <= lowerBound {
-			// log.Println("Skipping", burnHeight, address, commitBurn, stxReward)
 			continue
 		}
 		addrCounts[address] += 1
@@ -213,6 +179,9 @@ func queryMinerPower() []miner {
 	addrCounts[noSortitionKey] = numBlocks - numRows
 	btcSpent[noSortitionKey] = 0
 	stxEarnt[noSortitionKey] = 0
+
+	slog.Debug("Miner power", "addrCounts", addrCounts, "btcSpent", btcSpent,
+		"stxEarnt", stxEarnt)
 
 	miners := make([]miner, 0, len(addrCounts))
 	for addr, won := range addrCounts {
@@ -234,6 +203,7 @@ func queryMinerPower() []miner {
 		func(a, b miner) int {
 			return cmp.Compare(b.BlocksWon, a.BlocksWon)
 		})
+	slog.Debug("Miner power", "miners", miners)
 	return miners
 }
 

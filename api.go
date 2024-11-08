@@ -42,6 +42,8 @@ func (c Config) validate() {
 }
 
 var config Config
+
+// Map from miner's STX payout address to their Bitcoin address
 var minerAddressMap sync.Map
 
 type DotResponse struct {

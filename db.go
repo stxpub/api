@@ -4,8 +4,10 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -130,4 +132,53 @@ func getBlocks() []Block {
 		return nil
 	}
 	return blocks
+}
+
+func updateMinerAddressMapTask() error {
+	query := `SELECT DISTINCT
+	payments.recipient,marf.block_commits.apparent_sender
+	FROM nakamoto_block_headers
+	LEFT JOIN payments
+	ON nakamoto_block_headers.index_block_hash = payments.index_block_hash
+	LEFT JOIN marf.snapshots on nakamoto_block_headers.consensus_hash = marf.snapshots.consensus_hash
+	LEFT JOIN marf.block_commits on marf.block_commits.sortition_id = marf.snapshots.sortition_id
+	AND marf.block_commits.block_header_hash = marf.snapshots.winning_stacks_block_hash
+	ORDER BY nakamoto_block_headers.block_height ASC
+	LIMIT ?`
+
+	dbPath := filepath.Join(config.DataDir, chainstateDb)
+	cdb := sqlx.MustOpen("sqlite3", dbPath)
+	defer cdb.Close()
+
+	dbPath = filepath.Join(config.DataDir, sortitionDb)
+	cdb.MustExec(fmt.Sprintf("ATTACH DATABASE 'file:%s' AS marf", dbPath))
+	rows, err := cdb.Query(query, 144)
+	if err != nil {
+		slog.Warn("Error query miner addresses", "query", query, "error", err)
+		return err
+	}
+	defer rows.Close()
+
+	// Clear the existing map
+	minerAddressMap.Clear()
+
+	var stxAddr, btcAddr string
+	for rows.Next() {
+		if err := rows.Scan(&stxAddr, &btcAddr); err != nil {
+			slog.Warn("Error scanning miner addresses", "error", err)
+			continue
+		}
+		btcAddr = strings.Trim(btcAddr, "\"")
+		// Don't overwrite
+		slog.Debug("Trying to add mapping", "stx", stxAddr, "btc", btcAddr)
+		if old, exists := minerAddressMap.LoadOrStore(stxAddr, btcAddr); exists {
+			slog.Info("Skipping mapping", "stx", stxAddr, "old", old, "new", btcAddr)
+		}
+	}
+	// Print contents of the map using minerAddressMap.Range
+	minerAddressMap.Range(func(key, value interface{}) bool {
+		slog.Info("Miner address map", "stx", key, "btc", value)
+		return true
+	})
+	return nil
 }
