@@ -128,7 +128,7 @@ func queryMinerPower() []miner {
 	query := `WITH RECURSIVE block_ancestors(burn_header_height,parent_block_id,address,burnchain_commit_burn,stx_reward) AS (
 SELECT
 		nakamoto_block_headers.burn_header_height,nakamoto_block_headers.parent_block_id,
-		payments.address,payments.burnchain_commit_burn,payments.coinbase AS stx_reward
+		payments.recipient,payments.burnchain_commit_burn,payments.coinbase AS stx_reward
 FROM nakamoto_block_headers
 JOIN payments
 ON nakamoto_block_headers.index_block_hash = payments.index_block_hash
@@ -136,7 +136,7 @@ WHERE payments.index_block_hash = ?
 UNION ALL
 SELECT
 		nakamoto_block_headers.burn_header_height,nakamoto_block_headers.parent_block_id,
-		payments.address,payments.burnchain_commit_burn,payments.coinbase AS stx_reward
+		payments.recipient,payments.burnchain_commit_burn,payments.coinbase AS stx_reward
 FROM (nakamoto_block_headers JOIN payments ON nakamoto_block_headers.index_block_hash = payments.index_block_hash)
 )
     SELECT block_ancestors.burn_header_height,block_ancestors.address,block_ancestors.burnchain_commit_burn,block_ancestors.stx_reward

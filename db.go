@@ -135,15 +135,16 @@ func getBlocks() []Block {
 }
 
 func updateMinerAddressMapTask() error {
-	query := `SELECT DISTINCT
-	payments.recipient,marf.block_commits.apparent_sender
-	FROM nakamoto_block_headers
-	LEFT JOIN payments
-	ON nakamoto_block_headers.index_block_hash = payments.index_block_hash
-	LEFT JOIN marf.snapshots on nakamoto_block_headers.consensus_hash = marf.snapshots.consensus_hash
-	LEFT JOIN marf.block_commits on marf.block_commits.sortition_id = marf.snapshots.sortition_id
-	AND marf.block_commits.block_header_hash = marf.snapshots.winning_stacks_block_hash
-	ORDER BY nakamoto_block_headers.block_height ASC
+	query := `SELECT
+		payments.recipient,marf.block_commits.apparent_sender
+	FROM payments
+	LEFT JOIN nakamoto_block_headers
+		ON payments.index_block_hash = nakamoto_block_headers.index_block_hash
+	LEFT JOIN marf.snapshots
+		ON nakamoto_block_headers.consensus_hash = marf.snapshots.consensus_hash
+	LEFT JOIN marf.block_commits
+		ON marf.snapshots.winning_block_txid = marf.block_commits.txid
+	ORDER BY payments.stacks_block_height DESC
 	LIMIT ?`
 
 	dbPath := filepath.Join(config.DataDir, chainstateDb)
@@ -172,7 +173,7 @@ func updateMinerAddressMapTask() error {
 		// Don't overwrite
 		slog.Debug("Trying to add mapping", "stx", stxAddr, "btc", btcAddr)
 		if old, exists := minerAddressMap.LoadOrStore(stxAddr, btcAddr); exists {
-			slog.Info("Skipping mapping", "stx", stxAddr, "old", old, "new", btcAddr)
+			slog.Debug("Skipping mapping", "stx", stxAddr, "old", old, "new", btcAddr)
 		}
 	}
 	// Print contents of the map using minerAddressMap.Range
