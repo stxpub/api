@@ -118,32 +118,29 @@ func queryMinerPower() []miner {
 	defer db.Close()
 	defer cdb.Close()
 
-	var tip string
-	if err := cdb.Get(&tip, "SELECT index_block_hash FROM payments ORDER BY stacks_block_height DESC LIMIT 1"); err != nil {
-		log.Fatal(err)
-	}
-
 	_, lowerBound := getBlockRange(db, numBlocks)
 
-	query := `WITH RECURSIVE block_ancestors(burn_header_height,parent_block_id,address,burnchain_commit_burn,stx_reward) AS (
-SELECT
+	query := `WITH RECURSIVE block_ancestors(burn_header_height,parent_block_id,address,burnchain_commit_burn,stx_reward)
+	AS (
+	SELECT
 		nakamoto_block_headers.burn_header_height,nakamoto_block_headers.parent_block_id,
-		payments.recipient,payments.burnchain_commit_burn,payments.coinbase AS stx_reward
-FROM nakamoto_block_headers
-JOIN payments
-ON nakamoto_block_headers.index_block_hash = payments.index_block_hash
-WHERE payments.index_block_hash = ?
-UNION ALL
-SELECT
+		payments.recipient,payments.burnchain_commit_burn,(payments.coinbase + payments.tx_fees_anchored + payments.tx_fees_streamed) AS stx_reward
+	FROM nakamoto_block_headers
+	JOIN payments
+		ON nakamoto_block_headers.index_block_hash = payments.index_block_hash
+		WHERE nakamoto_block_headers.tenure_changed = 1
+	UNION ALL
+	SELECT
 		nakamoto_block_headers.burn_header_height,nakamoto_block_headers.parent_block_id,
-		payments.recipient,payments.burnchain_commit_burn,payments.coinbase AS stx_reward
-FROM (nakamoto_block_headers JOIN payments ON nakamoto_block_headers.index_block_hash = payments.index_block_hash)
-)
+		payments.recipient,payments.burnchain_commit_burn,(payments.coinbase + payments.tx_fees_anchored + payments.tx_fees_streamed) AS stx_reward
+	FROM (nakamoto_block_headers JOIN payments ON nakamoto_block_headers.index_block_hash = payments.index_block_hash)
+	JOIN block_ancestors ON nakamoto_block_headers.index_block_hash = block_ancestors.parent_block_id
+	ORDER BY nakamoto_block_headers.burn_header_height DESC
+	)
     SELECT block_ancestors.burn_header_height,block_ancestors.address,block_ancestors.burnchain_commit_burn,block_ancestors.stx_reward
-    FROM block_ancestors ORDER BY block_ancestors.burn_header_height DESC LIMIT ?`
+    FROM block_ancestors LIMIT ?`
 
-	slog.Debug("Querying", "query", query, "tip", tip, "numBlocks", numBlocks)
-	rows, err := cdb.Query(query, tip, numBlocks)
+	rows, err := cdb.Query(query, numBlocks)
 	if err != nil {
 		log.Fatal(err)
 	}
