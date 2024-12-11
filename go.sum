@@ -1,5 +1,7 @@
 cogentcore.org/core v0.3.5 h1:qTW/+GSUbeYYCSi29zdAQ/fnjWg2/E/aTbAMbfAFGfI=
 cogentcore.org/core v0.3.5/go.mod h1:q3OrXihYG2aTE2oG785ad5b6aJ3wzSCXeeD2SSLKWIE=
+cogentcore.org/core v0.3.7 h1:oRc9o1rH31dtVWk6PGJGPvkKDAvmDe6bak7lu3VwCno=
+cogentcore.org/core v0.3.7/go.mod h1:P5sOFH1GF4z7Sir+cVo8AmpSp7TKCehAmIsZ2w4DNro=
 dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7gZCb22OMCxBHrMx7a5I7Hp++hsVxbQ4BYO7hU=
 filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
@@ -52,6 +54,8 @@ github.com/stretchr/testify v1.9.0 h1:HtqpIVDClZ4nwg75+f6Lvsy/wHu+3BoSGCbBAcpTsT
 github.com/stretchr/testify v1.9.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/stxpub/codec v0.0.0-20241016200619-05cdd0b8869a h1:YjETPeT76KQ3ADwN2tvYIQ5JHYaeSrwu9lWAZqRrSKU=
 github.com/stxpub/codec v0.0.0-20241016200619-05cdd0b8869a/go.mod h1:l5eoq8zB5pt4J1ytb6eEZt8Md9Adb6CUDE07DHnz2nI=
+github.com/stxpub/codec v0.0.0-20241210173909-e24ecb74fd6f h1:0+StU+UaOV9T6BIWk//ud39iR7Os/cdQ2QrLQr0PcAs=
+github.com/stxpub/codec v0.0.0-20241210173909-e24ecb74fd6f/go.mod h1:l5eoq8zB5pt4J1ytb6eEZt8Md9Adb6CUDE07DHnz2nI=
 github.com/tidwall/gjson v1.18.0 h1:FIDeeyB800efLX89e5a8Y0BNH+LOngJyGrIWxG2FKQY=
 github.com/tidwall/gjson v1.18.0/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
 github.com/tidwall/match v1.1.1 h1:+Ho715JplO36QYgwN9PGYNhgZvoUSc9X2c80KVTi+GA=

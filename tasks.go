@@ -404,8 +404,8 @@ func makeNodeAttributes(commit *BlockCommit) AttributeMap {
 	attrs["color"] = "black"
 	attrs["penwidth"] = "1"
 	attrs["URL"] = `"https://mempool.space/tx/` + commit.txid + `"`
-	label := fmt.Sprintf("⛏️ %s, \n🔗 %d\n💸 %dK sats",
-		strings.Trim(commit.sender, `"`)[:8], commit.stacksHeight, commit.spend/1000)
+	label := fmt.Sprintf("⛏️ %s, \n🔗 %d\n💸 %dK sats\nmemo: %s",
+		strings.Trim(commit.sender, `"`)[:8], commit.stacksHeight, commit.spend/1000, commit.memo)
 	if commit.won {
 		attrs["color"] = "blue"
 		attrs["penwidth"] = "4"
