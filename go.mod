@@ -4,7 +4,7 @@ go 1.23.1
 
 require (
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2
-	github.com/go-chi/chi/v5 v5.1.0
+	github.com/go-chi/chi/v5 v5.2.1
 	github.com/go-chi/cors v1.2.1
 	github.com/go-chi/httplog/v2 v2.1.1
 	github.com/jmoiron/sqlx v1.4.0
@@ -16,7 +16,7 @@ require (
 )
 
 require (
-	cogentcore.org/core v0.3.7 // indirect
+	cogentcore.org/core v0.3.8 // indirect
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect

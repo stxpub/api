@@ -2,6 +2,8 @@ cogentcore.org/core v0.3.5 h1:qTW/+GSUbeYYCSi29zdAQ/fnjWg2/E/aTbAMbfAFGfI=
 cogentcore.org/core v0.3.5/go.mod h1:q3OrXihYG2aTE2oG785ad5b6aJ3wzSCXeeD2SSLKWIE=
 cogentcore.org/core v0.3.7 h1:oRc9o1rH31dtVWk6PGJGPvkKDAvmDe6bak7lu3VwCno=
 cogentcore.org/core v0.3.7/go.mod h1:P5sOFH1GF4z7Sir+cVo8AmpSp7TKCehAmIsZ2w4DNro=
+cogentcore.org/core v0.3.8 h1:302rfaOCLO4Z2Q1mO5/nOMw923bYFRTo0wF5XkuFBdE=
+cogentcore.org/core v0.3.8/go.mod h1:a9OXqQFcPqjA8F8my/7IMNwD7hlaIu5M4pHvkdBCJOI=
 dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7gZCb22OMCxBHrMx7a5I7Hp++hsVxbQ4BYO7hU=
 filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
 filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
@@ -17,6 +19,8 @@ github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8Yc
 github.com/fogleman/gg v1.2.1-0.20190220221249-0403632d5b90/go.mod h1:R/bRT+9gY/C5z7JzPU0zXsXHKM4/ayA+zqcVNZzPa1k=
 github.com/go-chi/chi/v5 v5.1.0 h1:acVI1TYaD+hhedDJ3r54HyA6sExp3HfXq7QWEEY/xMw=
 github.com/go-chi/chi/v5 v5.1.0/go.mod h1:DslCQbL2OYiznFReuXYUmQ2hGd1aDpCnlMNITLSKoi8=
+github.com/go-chi/chi/v5 v5.2.1 h1:KOIHODQj58PmL80G2Eak4WdvUzjSJSm0vG72crDCqb8=
+github.com/go-chi/chi/v5 v5.2.1/go.mod h1:L2yAIGWB3H+phAw1NxKwWM+7eUH/lU8pOMm5hHcoops=
 github.com/go-chi/cors v1.2.1 h1:xEC8UT3Rlp2QuWNEr4Fs/c2EAGVKBwy/1vHx3bppil4=
 github.com/go-chi/cors v1.2.1/go.mod h1:sSbTewc+6wYHBBCW7ytsFSn836hqM7JxpglAy2Vzc58=
 github.com/go-chi/httplog/v2 v2.1.1 h1:ojojiu4PIaoeJ/qAO4GWUxJqvYUTobeo7zmuHQJAxRk=
