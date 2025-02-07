@@ -172,10 +172,43 @@ func queryMinerPower() []miner {
 	if !rows.NextResultSet() && rows.Err() != nil {
 		log.Fatalf("expected more result sets: %v", rows.Err())
 	}
+
 	const noSortitionKey = "No Canonical Sortition"
 	addrCounts[noSortitionKey] = numBlocks - numRows
 	btcSpent[noSortitionKey] = 0
 	stxEarnt[noSortitionKey] = 0
+
+	// Fix https://github.com/stxpub/api/issues/2
+	query = `SELECT sender, SUM(burn_fee) AS total_burn_fee
+	FROM (
+	    SELECT TRIM(apparent_sender,'"') AS sender, burn_fee
+	    FROM block_commits
+	    WHERE block_height > ?
+	) GROUP BY sender`
+	r2, err := db.Query(query, lowerBound)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer r2.Close()
+	for r2.Next() {
+		// this is a bitcoin address but btcSpent map is keyed by stacks address
+		var sender string
+		var burnFee uint
+		if err := r2.Scan(&sender, &burnFee); err != nil {
+			log.Fatal(err)
+		}
+		// Overwrite btcSpent for burnFee for now
+		// Iterate over minerAddressMap. If the value matches the sender, update btcSpent
+		minerAddressMap.Range(func(k, v any) bool {
+			if v == sender {
+				addr := k.(string)
+				btcSpent[addr] = burnFee
+				slog.Debug("Updating btc spent", "btc", sender, "stx", addr, "btc", burnFee)
+				return false
+			}
+			return true
+		})
+	}
 
 	slog.Debug("Miner power", "addrCounts", addrCounts, "btcSpent", btcSpent,
 		"stxEarnt", stxEarnt)
